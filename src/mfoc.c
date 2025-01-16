@@ -1171,7 +1171,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
     // Iterate over Nt-x, Nt+x
     fprintf(stdout, "Iterate from %d to %d, Nt0 = %u\n", d->median - d->tolerance, d->median + d->tolerance, Nt);
     NtProbe = prng_successor(Nt, d->median - d->tolerance);
-    for (m = d->median - d->tolerance; m <= d->median + d->tolerance; m += 2) {
+    for (m = d->median - d->tolerance; m <= d->median + d->tolerance; m += 1) {
 
       // Try to recover the keystream1
       Ks1 = NtEnc ^ NtProbe;
@@ -1211,7 +1211,7 @@ int mf_enhanced_auth(int e_sector, int a_sector, mftag t, mfreader r, denonce *d
         free(revstate_start);
       }
 // 尝试下一个可能的NtProbe
-      NtProbe = prng_successor(NtProbe, 2);
+      NtProbe = prng_successor(NtProbe, 1);
     }
     // Truncate
     if (kcount != 0) {
